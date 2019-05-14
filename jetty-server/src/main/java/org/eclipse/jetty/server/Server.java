@@ -30,6 +30,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletRequestWrapper;
+import javax.servlet.ServletResponse;
+import javax.servlet.ServletResponseWrapper;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
@@ -558,14 +562,28 @@ public class Server extends HandlerWrapper implements Attributes
         }
 
         final String target = baseRequest.getPathInfo();
-        final HttpServletRequest request = (HttpServletRequest)event.getSuppliedRequest();
-        final HttpServletResponse response = (HttpServletResponse)event.getSuppliedResponse();
+        final HttpServletRequest request = getHttpServletRequest(event.getSuppliedRequest());//(HttpServletRequest)event.getSuppliedRequest();
+        final HttpServletResponse response = getHttpServletResponse(event.getSuppliedResponse());//(HttpServletResponse)event.getSuppliedResponse();
 
         if (LOG.isDebugEnabled())
             LOG.debug("{} {} {} on {}", request.getDispatcherType(), request.getMethod(), target, channel);
         handle(target, baseRequest, request, response);
         if (LOG.isDebugEnabled())
             LOG.debug("handledAsync={} async={} committed={} on {}", channel.getRequest().isHandled(), request.isAsyncStarted(), response.isCommitted(), channel);
+    }
+
+    protected HttpServletRequest getHttpServletRequest(ServletRequest servletRequest){
+        if(servletRequest instanceof ServletRequestWrapper ){
+            return (HttpServletRequest)((ServletRequestWrapper)servletRequest).getRequest();
+        }
+        return (HttpServletRequest)servletRequest;
+    }
+
+    protected HttpServletResponse getHttpServletResponse(ServletResponse servletResponse){
+        if(servletResponse instanceof ServletResponseWrapper){
+            return (HttpServletResponse)((ServletResponseWrapper)servletResponse).getResponse();
+        }
+        return (HttpServletResponse)servletResponse;
     }
 
     public void join() throws InterruptedException
