@@ -134,5 +134,14 @@
       <artifactId>jetty-test-helper</artifactId>
       <scope>test</scope>
     </dependency>
+    <!--
+    some transitive test dependencies use range we just enforce version to avoid metadata check during the build
+    -->
+    <dependency>
+      <groupId>net.minidev</groupId>
+      <artifactId>json-smart</artifactId>
+      <version>2.3</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>
