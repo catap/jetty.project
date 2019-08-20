@@ -19,6 +19,7 @@
 package org.eclipse.jetty.util;
 
 import java.io.ByteArrayInputStream;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -241,7 +242,7 @@ public class URLEncodedTest
     }
 
     @Test
-    public void testUtf8_MultiByteCodePoint()
+    public void testUtf8_MultiByteCodePoint() throws CharacterCodingException
     {
         String input = "text=test%C3%A4";
         UrlEncoded url_encoded = new UrlEncoded();

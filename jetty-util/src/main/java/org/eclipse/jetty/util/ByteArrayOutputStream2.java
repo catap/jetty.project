@@ -19,6 +19,7 @@
 package org.eclipse.jetty.util;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 
 /**
@@ -39,6 +40,11 @@ public class ByteArrayOutputStream2 extends ByteArrayOutputStream
     public byte[] getBuf()
     {
         return buf;
+    }
+
+    public ByteBuffer getByteBuffer()
+    {
+        return ByteBuffer.wrap(buf, 0, count);
     }
 
     public int getCount()

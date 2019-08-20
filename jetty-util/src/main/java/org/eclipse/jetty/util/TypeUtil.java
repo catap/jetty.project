@@ -28,6 +28,8 @@ import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.security.AccessController;
 import java.security.CodeSource;
 import java.security.PrivilegedAction;
@@ -365,6 +367,37 @@ public class TypeUtil
             int digit = convertHexDigit((int)c);
             if (digit < 0 || digit >= base)
                 throw new NumberFormatException(s.substring(offset, offset + length));
+            value = value * base + digit;
+        }
+        return value;
+    }
+
+    /**
+     * Parse an int from a substring.
+     * Negative numbers are not handled.
+     *
+     * @param b ByteBuffer
+     * @param offset Offset within string
+     * @param length Length of integer or -1 for remainder of string
+     * @param base base of the integer
+     * @return the parsed integer
+     * @throws NumberFormatException if the string cannot be parsed
+     */
+    public static int parseInt(ByteBuffer b, int offset, int length, int base)
+            throws NumberFormatException
+    {
+        int value = 0;
+
+        if (length < 0)
+            length = b.remaining() - offset;
+
+        for (int i = 0; i < length; i++)
+        {
+            char c = (char)(0xff & b.get(offset + i));
+
+            int digit = convertHexDigit((int)c);
+            if (digit < 0 || digit >= base)
+                throw new NumberFormatException(new String(b.array(), offset, offset + length));
             value = value * base + digit;
         }
         return value;

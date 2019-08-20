@@ -22,8 +22,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.StringWriter;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.*;
 import java.util.List;
 import java.util.Map;
 
@@ -60,22 +61,50 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
 {
     static final Logger LOG = Log.getLogger(UrlEncoded.class);
 
-    public static final Charset ENCODING;
+    public static final CharsetEncoder ENCODER;
+
+    public static final CharsetDecoder DECODER;
+
+    public static final CharsetEncoder SYSTEM_ENCODER = defaultEncoder(Charset.defaultCharset());
+
+    public static final CharsetDecoder SYSTEM_DECODER = defaultDecoder(Charset.defaultCharset());
+
+    public static final CharsetEncoder UTF_8_ENCODER = defaultEncoder(StandardCharsets.UTF_8);
+
+    public static final CharsetDecoder UTF_8_DECODER = defaultDecoder(StandardCharsets.UTF_8);
+
+    public static final CharsetEncoder ISO_8859_1_ENCODER = defaultEncoder(StandardCharsets.ISO_8859_1);
+
+    public static final CharsetDecoder ISO_8859_1_DECODER = defaultDecoder(StandardCharsets.ISO_8859_1);
 
     static
     {
-        Charset encoding;
+        Charset charset;
         try
         {
-            String charset = System.getProperty("org.eclipse.jetty.util.UrlEncoding.charset");
-            encoding = charset == null ? StandardCharsets.UTF_8 : Charset.forName(charset);
+            String charsetName = System.getProperty("org.eclipse.jetty.util.UrlEncoding.charset");
+            charset = charsetName == null ? StandardCharsets.UTF_8 : Charset.forName(charsetName);
         }
         catch (Exception e)
         {
             LOG.warn(e);
-            encoding = StandardCharsets.UTF_8;
+            charset = StandardCharsets.UTF_8;
         }
-        ENCODING = encoding;
+        ENCODER = defaultEncoder(charset);
+
+        DECODER = defaultDecoder(charset);
+    }
+
+    private static CharsetEncoder defaultEncoder(Charset charset) {
+        return charset.newEncoder()
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                .onMalformedInput(CodingErrorAction.REPORT);
+    }
+
+    private static CharsetDecoder defaultDecoder(Charset charset) {
+        return charset.newDecoder()
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                .onMalformedInput(CodingErrorAction.REPORT);
     }
 
     public UrlEncoded(UrlEncoded url)
@@ -87,29 +116,35 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
     {
     }
 
-    public UrlEncoded(String query)
+    public UrlEncoded(String query) throws CharacterCodingException
     {
-        decodeTo(query, this, ENCODING);
+        decodeTo(query, this, DECODER);
     }
 
-    public void decode(String query)
+    public void decode(String query) throws CharacterCodingException
     {
-        decodeTo(query, this, ENCODING);
+        decodeTo(query, this, DECODER);
     }
 
-    public void decode(String query, Charset charset)
+    public void decode(String query, Charset charset) throws CharacterCodingException
     {
-        decodeTo(query, this, charset);
+        decodeTo(query, this, charset == null ? null : defaultDecoder(charset));
     }
+
+    public void decode(String query, CharsetDecoder decoder) throws CharacterCodingException
+    {
+        decodeTo(query, this, decoder);
+    }
+
 
     /**
      * Encode MultiMap with % encoding for UTF8 sequences.
      *
      * @return the MultiMap as a string with % encoding
      */
-    public String encode()
+    public String encode() throws CharacterCodingException
     {
-        return encode(ENCODING, false);
+        return encode(this, ENCODER, false);
     }
 
     /**
@@ -118,9 +153,20 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param charset the charset to use for encoding
      * @return the MultiMap as a string encoded with % encodings
      */
-    public String encode(Charset charset)
+    public String encode(Charset charset) throws CharacterCodingException
     {
         return encode(charset, false);
+    }
+
+    /**
+     * Encode MultiMap with % encoding for arbitrary Charset sequences.
+     *
+     * @param encoder the charset encoder to use for encoding
+     * @return the MultiMap as a string encoded with % encodings
+     */
+    public String encode(CharsetEncoder encoder) throws CharacterCodingException
+    {
+        return encode(this, encoder, false);
     }
 
     /**
@@ -131,7 +177,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * for parameters without a value. e.g. <code>"blah?a=&amp;b=&amp;c="</code>.
      * @return the MultiMap as a string encoded with % encodings
      */
-    public synchronized String encode(Charset charset, boolean equalsForNullValue)
+    public synchronized String encode(Charset charset, boolean equalsForNullValue) throws CharacterCodingException
     {
         return encode(this, charset, equalsForNullValue);
     }
@@ -145,10 +191,24 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * for parameters without a value. e.g. <code>"blah?a=&amp;b=&amp;c="</code>.
      * @return the MultiMap as a string encoded with % encodings.
      */
-    public static String encode(MultiMap<String> map, Charset charset, boolean equalsForNullValue)
+    public static String encode(MultiMap<String> map, Charset charset, boolean equalsForNullValue) throws CharacterCodingException
     {
-        if (charset == null)
-            charset = ENCODING;
+        return encode(map, charset == null ? null: defaultEncoder(charset), equalsForNullValue);
+    }
+
+    /**
+     * Encode MultiMap with % encoding.
+     *
+     * @param map the map to encode
+     * @param encoder the charset encoder to use for encoding (uses default encoding if null)
+     * @param equalsForNullValue if True, then an '=' is always used, even
+     * for parameters without a value. e.g. <code>"blah?a=&amp;b=&amp;c="</code>.
+     * @return the MultiMap as a string encoded with % encodings.
+     */
+    public static String encode(MultiMap<String> map, CharsetEncoder encoder, boolean equalsForNullValue) throws CharacterCodingException
+    {
+        if (encoder == null)
+            encoder = ENCODER;
 
         StringBuilder result = new StringBuilder(128);
 
@@ -166,7 +226,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
 
             if (s == 0)
             {
-                result.append(encodeString(key, charset));
+                result.append(encodeString(key, encoder));
                 if (equalsForNullValue)
                     result.append('=');
             }
@@ -177,7 +237,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
                     if (i > 0)
                         result.append('&');
                     String val = list.get(i);
-                    result.append(encodeString(key, charset));
+                    result.append(encodeString(key, encoder));
 
                     if (val != null)
                     {
@@ -185,7 +245,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
                         if (str.length() > 0)
                         {
                             result.append('=');
-                            result.append(encodeString(str, charset));
+                            result.append(encodeString(str, encoder));
                         }
                         else if (equalsForNullValue)
                             result.append('=');
@@ -206,7 +266,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param map the MultiMap to put parsed query parameters into
      * @param charset the charset to use for decoding
      */
-    public static void decodeTo(String content, MultiMap<String> map, String charset)
+    public static void decodeTo(String content, MultiMap<String> map, String charset) throws CharacterCodingException
     {
         decodeTo(content, map, charset == null ? null : Charset.forName(charset));
     }
@@ -218,33 +278,53 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param map the MultiMap to put parsed query parameters into
      * @param charset the charset to use for decoding
      */
-    public static void decodeTo(String content, MultiMap<String> map, Charset charset)
+    public static void decodeTo(String content, MultiMap<String> map, Charset charset) throws CharacterCodingException
     {
-        if (charset == null)
-            charset = ENCODING;
+        decodeTo(content, map, charset == null ? null : defaultDecoder(charset));
+    }
 
-        if (StandardCharsets.UTF_8.equals(charset))
-        {
-            decodeUtf8To(content, 0, content.length(), map);
-            return;
-        }
+    /**
+     * Decoded parameters to Map.
+     *
+     * @param content the string containing the encoded parameters
+     * @param map the MultiMap to put parsed query parameters into
+     * @param decoder the charset decoder to use for decoding
+     */
+    public static void decodeTo(String content, MultiMap<String> map, CharsetDecoder decoder) throws CharacterCodingException
+    {
+        decodeTo(content, 0, content.length(), map, decoder);
+    }
 
+    /**
+     * Decoded parameters to Map.
+     *
+     * @param content the string containing the encoded parameters
+     * @param map the MultiMap to put parsed query parameters into
+     * @param offset the offset within raw to decode from
+     * @param length the length of the section to decode
+     * @param decoder the charset decoder to use for decoding
+     */
+    public static void decodeTo(String content, int offset, int length, MultiMap<String> map, CharsetDecoder decoder) throws CharacterCodingException
+    {
+        if (decoder == null)
+            decoder = DECODER;
+
+        ByteBuffer byteBuffer = SYSTEM_ENCODER.encode(CharBuffer.wrap(content, offset, length));
+
+        ByteArrayOutputStream2 buffer = new ByteArrayOutputStream2();
         synchronized (map)
         {
             String key = null;
-            String value;
-            int mark = -1;
-            boolean encoded = false;
-            for (int i = 0; i < content.length(); i++)
+            String value = null;
+
+            for (int i = 0; i < byteBuffer.remaining(); i++)
             {
-                char c = content.charAt(i);
-                switch (c)
+                byte b = byteBuffer.get(i);
+                switch (b)
                 {
                     case '&':
-                        int l = i - mark - 1;
-                        value = l == 0 ? "" : (encoded ? decodeString(content, mark + 1, l, charset) : content.substring(mark + 1, i));
-                        mark = i;
-                        encoded = false;
+                        value = decoder.decode(buffer.getByteBuffer()).toString();
+                        buffer.reset();
                         if (key != null)
                         {
                             map.add(key, value);
@@ -256,44 +336,56 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
                         key = null;
                         value = null;
                         break;
+
                     case '=':
                         if (key != null)
+                        {
+                            buffer.write(b);
                             break;
-                        key = encoded ? decodeString(content, mark + 1, i - mark - 1, charset) : content.substring(mark + 1, i);
-                        mark = i;
-                        encoded = false;
+                        }
+                        key = decoder.decode(buffer.getByteBuffer()).toString();
+                        buffer.reset();
                         break;
+
                     case '+':
-                        encoded = true;
+                        buffer.write((byte)' ');
                         break;
+
                     case '%':
-                        encoded = true;
+                        if (i + 2 < byteBuffer.remaining())
+                        {
+                            byte hi = byteBuffer.get(++i);
+                            byte lo = byteBuffer.get(++i);
+                            buffer.write(decodeHexByte((char) hi, (char) lo));
+                        }
+                        else
+                        {
+                            throw new Utf8Appendable.NotUtf8Exception("Incomplete % encoding");
+                        }
+                        break;
+
+                    default:
+                        buffer.write(b);
                         break;
                 }
             }
 
             if (key != null)
             {
-                int l = content.length() - mark - 1;
-                value = l == 0 ? "" : (encoded ? decodeString(content, mark + 1, l, charset) : content.substring(mark + 1));
+                value = decoder.decode(buffer.getByteBuffer()).toString();
+                buffer.reset();
                 map.add(key, value);
             }
-            else if (mark < content.length())
+            else if (buffer.size() > 0)
             {
-                key = encoded
-                    ? decodeString(content, mark + 1, content.length() - mark - 1, charset)
-                    : content.substring(mark + 1);
-                if (key != null && key.length() > 0)
-                {
-                    map.add(key, "");
-                }
+                map.add(decoder.decode(buffer.getByteBuffer()).toString(), "");
             }
         }
     }
 
-    public static void decodeUtf8To(String query, MultiMap<String> map)
+    public static void decodeUtf8To(String query, MultiMap<String> map) throws CharacterCodingException
     {
-        decodeUtf8To(query, 0, query.length(), map);
+        decodeTo(query, 0, query.length(), map, UTF_8_DECODER);
     }
 
     /**
@@ -304,79 +396,9 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param length the length of the section to decode
      * @param map the {@link MultiMap} to populate
      */
-    public static void decodeUtf8To(String query, int offset, int length, MultiMap<String> map)
+    public static void decodeUtf8To(String query, int offset, int length, MultiMap<String> map) throws CharacterCodingException
     {
-        Utf8StringBuilder buffer = new Utf8StringBuilder();
-        synchronized (map)
-        {
-            String key = null;
-            String value = null;
-
-            int end = offset + length;
-            for (int i = offset; i < end; i++)
-            {
-                char c = query.charAt(i);
-                switch (c)
-                {
-                    case '&':
-                        value = buffer.toReplacedString();
-                        buffer.reset();
-                        if (key != null)
-                        {
-                            map.add(key, value);
-                        }
-                        else if (value != null && value.length() > 0)
-                        {
-                            map.add(value, "");
-                        }
-                        key = null;
-                        value = null;
-                        break;
-
-                    case '=':
-                        if (key != null)
-                        {
-                            buffer.append(c);
-                            break;
-                        }
-                        key = buffer.toReplacedString();
-                        buffer.reset();
-                        break;
-
-                    case '+':
-                        buffer.append((byte)' ');
-                        break;
-
-                    case '%':
-                        if (i + 2 < end)
-                        {
-                            char hi = query.charAt(++i);
-                            char lo = query.charAt(++i);
-                            buffer.append(decodeHexByte(hi, lo));
-                        }
-                        else
-                        {
-                            throw new Utf8Appendable.NotUtf8Exception("Incomplete % encoding");
-                        }
-                        break;
-
-                    default:
-                        buffer.append(c);
-                        break;
-                }
-            }
-
-            if (key != null)
-            {
-                value = buffer.toReplacedString();
-                buffer.reset();
-                map.add(key, value);
-            }
-            else if (buffer.length() > 0)
-            {
-                map.add(buffer.toReplacedString(), "");
-            }
-        }
+        decodeTo(query, offset, length, map, UTF_8_DECODER);
     }
 
     /**
@@ -391,74 +413,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
     public static void decode88591To(InputStream in, MultiMap<String> map, int maxLength, int maxKeys)
         throws IOException
     {
-        synchronized (map)
-        {
-            StringBuilder buffer = new StringBuilder();
-            String key = null;
-            String value = null;
-
-            int b;
-
-            int totalLength = 0;
-            while ((b = in.read()) >= 0)
-            {
-                switch ((char)b)
-                {
-                    case '&':
-                        value = buffer.length() == 0 ? "" : buffer.toString();
-                        buffer.setLength(0);
-                        if (key != null)
-                        {
-                            map.add(key, value);
-                        }
-                        else if (value.length() > 0)
-                        {
-                            map.add(value, "");
-                        }
-                        key = null;
-                        value = null;
-                        checkMaxKeys(map, maxKeys);
-                        break;
-
-                    case '=':
-                        if (key != null)
-                        {
-                            buffer.append((char)b);
-                            break;
-                        }
-                        key = buffer.toString();
-                        buffer.setLength(0);
-                        break;
-
-                    case '+':
-                        buffer.append(' ');
-                        break;
-
-                    case '%':
-                        int code0 = in.read();
-                        int code1 = in.read();
-                        buffer.append(decodeHexChar(code0, code1));
-                        break;
-
-                    default:
-                        buffer.append((char)b);
-                        break;
-                }
-                checkMaxLength(++totalLength, maxLength);
-            }
-
-            if (key != null)
-            {
-                value = buffer.length() == 0 ? "" : buffer.toString();
-                buffer.setLength(0);
-                map.add(key, value);
-            }
-            else if (buffer.length() > 0)
-            {
-                map.add(buffer.toString(), "");
-            }
-            checkMaxKeys(map, maxKeys);
-        }
+        decodeTo(in, map, ISO_8859_1_DECODER, maxLength, maxKeys);
     }
 
     /**
@@ -473,74 +428,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
     public static void decodeUtf8To(InputStream in, MultiMap<String> map, int maxLength, int maxKeys)
         throws IOException
     {
-        synchronized (map)
-        {
-            Utf8StringBuilder buffer = new Utf8StringBuilder();
-            String key = null;
-            String value = null;
-
-            int b;
-
-            int totalLength = 0;
-            while ((b = in.read()) >= 0)
-            {
-                switch ((char)b)
-                {
-                    case '&':
-                        value = buffer.toReplacedString();
-                        buffer.reset();
-                        if (key != null)
-                        {
-                            map.add(key, value);
-                        }
-                        else if (value != null && value.length() > 0)
-                        {
-                            map.add(value, "");
-                        }
-                        key = null;
-                        value = null;
-                        checkMaxKeys(map, maxKeys);
-                        break;
-
-                    case '=':
-                        if (key != null)
-                        {
-                            buffer.append((byte)b);
-                            break;
-                        }
-                        key = buffer.toReplacedString();
-                        buffer.reset();
-                        break;
-
-                    case '+':
-                        buffer.append((byte)' ');
-                        break;
-
-                    case '%':
-                        char code0 = (char)in.read();
-                        char code1 = (char)in.read();
-                        buffer.append(decodeHexByte(code0, code1));
-                        break;
-
-                    default:
-                        buffer.append((byte)b);
-                        break;
-                }
-                checkMaxLength(++totalLength, maxLength);
-            }
-
-            if (key != null)
-            {
-                value = buffer.toReplacedString();
-                buffer.reset();
-                map.add(key, value);
-            }
-            else if (buffer.length() > 0)
-            {
-                map.add(buffer.toReplacedString(), "");
-            }
-            checkMaxKeys(map, maxKeys);
-        }
+        decodeTo(in, map, UTF_8_DECODER, maxLength, maxKeys);
     }
 
     public static void decodeUtf16To(InputStream in, MultiMap<String> map, int maxLength, int maxKeys) throws IOException
@@ -566,21 +454,7 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
     public static void decodeTo(InputStream in, MultiMap<String> map, String charset, int maxLength, int maxKeys)
         throws IOException
     {
-        if (charset == null)
-        {
-            if (ENCODING.equals(StandardCharsets.UTF_8))
-                decodeUtf8To(in, map, maxLength, maxKeys);
-            else
-                decodeTo(in, map, ENCODING, maxLength, maxKeys);
-        }
-        else if (StringUtil.__UTF8.equalsIgnoreCase(charset))
-            decodeUtf8To(in, map, maxLength, maxKeys);
-        else if (StringUtil.__ISO_8859_1.equalsIgnoreCase(charset))
-            decode88591To(in, map, maxLength, maxKeys);
-        else if (StringUtil.__UTF16.equalsIgnoreCase(charset))
-            decodeUtf16To(in, map, maxLength, maxKeys);
-        else
-            decodeTo(in, map, Charset.forName(charset), maxLength, maxKeys);
+        decodeTo(in, map, Charset.forName(charset), maxLength, maxKeys);
     }
 
     /**
@@ -594,101 +468,94 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @throws IOException if unable to decode input stream
      */
     public static void decodeTo(InputStream in, MultiMap<String> map, Charset charset, int maxLength, int maxKeys)
+            throws IOException
+    {
+        decodeTo(in, map, charset == null ? null : defaultDecoder(charset), maxLength, maxKeys);
+    }
+
+    /**
+     * Decoded parameters to Map.
+     *
+     * @param in the stream containing the encoded parameters
+     * @param map the MultiMap to decode into
+     * @param decoder the charset decoder to use for decoding
+     * @param maxLength the maximum length of the form to decode
+     * @param maxKeys the maximum number of keys to decode
+     * @throws IOException if unable to decode input stream
+     */
+    public static void decodeTo(InputStream in, MultiMap<String> map, CharsetDecoder decoder, int maxLength, int maxKeys)
         throws IOException
     {
-        //no charset present, use the configured default
-        if (charset == null)
-            charset = ENCODING;
-
-        if (StandardCharsets.UTF_8.equals(charset))
-        {
-            decodeUtf8To(in, map, maxLength, maxKeys);
-            return;
-        }
-
-        if (StandardCharsets.ISO_8859_1.equals(charset))
-        {
-            decode88591To(in, map, maxLength, maxKeys);
-            return;
-        }
-
-        if (StandardCharsets.UTF_16.equals(charset)) // Should be all 2 byte encodings
-        {
-            decodeUtf16To(in, map, maxLength, maxKeys);
-            return;
-        }
+        if (decoder == null)
+            decoder = DECODER;
 
         synchronized (map)
         {
+            ByteArrayOutputStream2 buffer = new ByteArrayOutputStream2();
             String key = null;
             String value = null;
 
-            int c;
+            int b;
 
             int totalLength = 0;
-
-            try (ByteArrayOutputStream2 output = new ByteArrayOutputStream2())
+            while ((b = in.read()) >= 0)
             {
-                int size = 0;
+                switch ((char)b)
+                {
+                    case '&':
+                        value = decoder.decode(buffer.getByteBuffer()).toString();
+                        buffer.reset();
+                        if (key != null)
+                        {
+                            map.add(key, value);
+                        }
+                        else if (value != null && value.length() > 0)
+                        {
+                            map.add(value, "");
+                        }
+                        key = null;
+                        value = null;
+                        checkMaxKeys(map, maxKeys);
+                        break;
 
-                while ((c = in.read()) > 0)
-                {
-                    switch ((char)c)
-                    {
-                        case '&':
-                            size = output.size();
-                            value = size == 0 ? "" : output.toString(charset);
-                            output.setCount(0);
-                            if (key != null)
-                            {
-                                map.add(key, value);
-                            }
-                            else if (value != null && value.length() > 0)
-                            {
-                                map.add(value, "");
-                            }
-                            key = null;
-                            value = null;
-                            checkMaxKeys(map, maxKeys);
+                    case '=':
+                        if (key != null)
+                        {
+                            buffer.write((byte)b);
                             break;
-                        case '=':
-                            if (key != null)
-                            {
-                                output.write(c);
-                                break;
-                            }
-                            size = output.size();
-                            key = size == 0 ? "" : output.toString(charset);
-                            output.setCount(0);
-                            break;
-                        case '+':
-                            output.write(' ');
-                            break;
-                        case '%':
-                            int code0 = in.read();
-                            int code1 = in.read();
-                            output.write(decodeHexChar(code0, code1));
-                            break;
-                        default:
-                            output.write(c);
-                            break;
-                    }
-                    checkMaxLength(++totalLength, maxLength);
-                }
+                        }
+                        key = decoder.decode(buffer.getByteBuffer()).toString();
+                        buffer.reset();
+                        break;
 
-                size = output.size();
-                if (key != null)
-                {
-                    value = size == 0 ? "" : output.toString(charset);
-                    output.setCount(0);
-                    map.add(key, value);
+                    case '+':
+                        buffer.write((byte)' ');
+                        break;
+
+                    case '%':
+                        char code0 = (char)in.read();
+                        char code1 = (char)in.read();
+                        buffer.write(decodeHexByte(code0, code1));
+                        break;
+
+                    default:
+                        buffer.write((byte)b);
+                        break;
                 }
-                else if (size > 0)
-                {
-                    map.add(output.toString(charset), "");
-                }
-                checkMaxKeys(map, maxKeys);
+                checkMaxLength(++totalLength, maxLength);
             }
+
+            if (key != null)
+            {
+                value = decoder.decode(buffer.getByteBuffer()).toString();
+                buffer.reset();
+                map.add(key, value);
+            }
+            else if (buffer.size() > 0)
+            {
+                map.add(decoder.decode(buffer.getByteBuffer()).toString(), "");
+            }
+            checkMaxKeys(map, maxKeys);
         }
     }
 
@@ -713,9 +580,9 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param encoded the encoded string to decode
      * @return the decoded string
      */
-    public static String decodeString(String encoded)
+    public static String decodeString(String encoded) throws CharacterCodingException
     {
-        return decodeString(encoded, 0, encoded.length(), ENCODING);
+        return decodeString(CharBuffer.wrap(encoded), DECODER);
     }
 
     /**
@@ -729,155 +596,62 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param charset the charset to use for decoding
      * @return the decoded string
      */
-    public static String decodeString(String encoded, int offset, int length, Charset charset)
+    public static String decodeString(String encoded, int offset, int length, Charset charset) throws CharacterCodingException
     {
-        if (charset == null || StandardCharsets.UTF_8.equals(charset))
-        {
-            Utf8StringBuffer buffer = null;
+        StringBuffer sb = new StringBuffer();
+        sb.append(encoded, 0, offset);
+        sb.append(decodeString(CharBuffer.wrap(encoded, offset, 0), charset == null ? DECODER : defaultDecoder(charset)));
+        sb.append(encoded, offset + length, encoded.length() - length);
 
-            for (int i = 0; i < length; i++)
-            {
-                char c = encoded.charAt(offset + i);
-                if (c < 0 || c > 0xff)
-                {
-                    if (buffer == null)
-                    {
-                        buffer = new Utf8StringBuffer(length);
-                        buffer.getStringBuffer().append(encoded, offset, offset + i + 1);
-                    }
-                    else
-                        buffer.getStringBuffer().append(c);
-                }
-                else if (c == '+')
-                {
-                    if (buffer == null)
-                    {
-                        buffer = new Utf8StringBuffer(length);
-                        buffer.getStringBuffer().append(encoded, offset, offset + i);
-                    }
+        return sb.toString();
+    }
 
-                    buffer.getStringBuffer().append(' ');
-                }
-                else if (c == '%')
-                {
-                    if (buffer == null)
-                    {
-                        buffer = new Utf8StringBuffer(length);
-                        buffer.getStringBuffer().append(encoded, offset, offset + i);
-                    }
-
-                    if ((i + 2) < length)
-                    {
-                        int o = offset + i + 1;
-                        i += 2;
-                        byte b = (byte)TypeUtil.parseInt(encoded, o, 2, 16);
-                        buffer.append(b);
-                    }
-                    else
-                    {
-                        buffer.getStringBuffer().append(Utf8Appendable.REPLACEMENT);
-                        i = length;
-                    }
-                }
-                else if (buffer != null)
-                    buffer.getStringBuffer().append(c);
-            }
-
-            if (buffer == null)
-            {
-                if (offset == 0 && encoded.length() == length)
-                    return encoded;
-                return encoded.substring(offset, offset + length);
-            }
-
-            return buffer.toReplacedString();
+    /**
+     * Decode String with % encoding.
+     * This method makes the assumption that the majority of calls
+     * will need no decoding.
+     *
+     * @param charBuffer the encoded charbuffer to decode
+     * @param decoder the charset to use for decoding
+     * @return the decoded string
+     */
+    public static String decodeString(CharBuffer charBuffer, CharsetDecoder decoder) throws CharacterCodingException
+    {
+        if (decoder == null) {
+            decoder = DECODER;
         }
-        else
+
+        ByteBuffer byteBuffer = SYSTEM_ENCODER.encode(charBuffer);
+
+        ByteArrayOutputStream2 buffer = new ByteArrayOutputStream2();
+
+        for (int i = 0; i < byteBuffer.remaining(); i++)
         {
-            StringBuffer buffer = null;
-
-            for (int i = 0; i < length; i++)
+            byte b = byteBuffer.get(i);
+            if (b == '+')
             {
-                char c = encoded.charAt(offset + i);
-                if (c < 0 || c > 0xff)
-                {
-                    if (buffer == null)
-                    {
-                        buffer = new StringBuffer(length);
-                        buffer.append(encoded, offset, offset + i + 1);
-                    }
-                    else
-                        buffer.append(c);
-                }
-                else if (c == '+')
-                {
-                    if (buffer == null)
-                    {
-                        buffer = new StringBuffer(length);
-                        buffer.append(encoded, offset, offset + i);
-                    }
-
-                    buffer.append(' ');
-                }
-                else if (c == '%')
-                {
-                    if (buffer == null)
-                    {
-                        buffer = new StringBuffer(length);
-                        buffer.append(encoded, offset, offset + i);
-                    }
-
-                    byte[] ba = new byte[length];
-                    int n = 0;
-                    while (c >= 0 && c <= 0xff)
-                    {
-                        if (c == '%')
-                        {
-                            if (i + 2 < length)
-                            {
-                                int o = offset + i + 1;
-                                i += 3;
-                                ba[n] = (byte)TypeUtil.parseInt(encoded, o, 2, 16);
-                                n++;
-                            }
-                            else
-                            {
-                                ba[n++] = (byte)'?';
-                                i = length;
-                            }
-                        }
-                        else if (c == '+')
-                        {
-                            ba[n++] = (byte)' ';
-                            i++;
-                        }
-                        else
-                        {
-                            ba[n++] = (byte)c;
-                            i++;
-                        }
-
-                        if (i >= length)
-                            break;
-                        c = encoded.charAt(offset + i);
-                    }
-
-                    i--;
-                    buffer.append(new String(ba, 0, n, charset));
-                }
-                else if (buffer != null)
-                    buffer.append(c);
+                buffer.write(' ');
             }
-
-            if (buffer == null)
+            else if (b == '%')
             {
-                if (offset == 0 && encoded.length() == length)
-                    return encoded;
-                return encoded.substring(offset, offset + length);
+                if ((i + 2) < byteBuffer.remaining())
+                {
+                    int o = i + 1;
+                    i += 2;
+                    b = (byte)TypeUtil.parseInt(byteBuffer, o, 2, 16);
+                    buffer.write(b);
+                }
+                else
+                {
+                    buffer.write(Utf8Appendable.REPLACEMENT);
+                    break;
+                }
             }
-
-            return buffer.toString();
+            else
+                buffer.write(b);
         }
+
+        return decoder.decode(buffer.getByteBuffer()).toString();
     }
 
     private static char decodeHexChar(int hi, int lo)
@@ -910,9 +684,9 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param string the string to encode
      * @return encoded string.
      */
-    public static String encodeString(String string)
+    public static String encodeString(String string) throws CharacterCodingException
     {
-        return encodeString(string, ENCODING);
+        return encodeString(string, ENCODER);
     }
 
     /**
@@ -922,54 +696,67 @@ public class UrlEncoded extends MultiMap<String> implements Cloneable
      * @param charset the charset to use for encoding
      * @return encoded string.
      */
-    public static String encodeString(String string, Charset charset)
+    public static String encodeString(String string, Charset charset) throws CharacterCodingException
     {
-        if (charset == null)
-            charset = ENCODING;
-        byte[] bytes = null;
-        bytes = string.getBytes(charset);
+        return encodeString(string, charset == null ? null : defaultEncoder(charset));
+    }
 
-        int len = bytes.length;
-        byte[] encoded = new byte[bytes.length * 3];
-        int n = 0;
+    /**
+     * Perform URL encoding.
+     *
+     * @param string the string to encode
+     * @param encoder the charset encoder to use for encoding
+     * @return encoded string.
+     */
+    public static String encodeString(String string, CharsetEncoder encoder) throws CharacterCodingException
+    {
+        if (encoder == null)
+            encoder = ENCODER;
+
+        CharBuffer charBuffer = CharBuffer.wrap(string);
+
+        ByteBuffer byteBuffer = encoder.encode(charBuffer);
+
+        int len = byteBuffer.remaining();
+        ByteArrayOutputStream2 encoded = new ByteArrayOutputStream2();
         boolean noEncode = true;
 
         for (int i = 0; i < len; i++)
         {
-            byte b = bytes[i];
+            byte b = byteBuffer.get(i);
 
             if (b == ' ')
             {
                 noEncode = false;
-                encoded[n++] = (byte)'+';
+                encoded.write('+');
             }
             else if (b >= 'a' && b <= 'z' ||
                 b >= 'A' && b <= 'Z' ||
                 b >= '0' && b <= '9')
             {
-                encoded[n++] = b;
+                encoded.write(b);
             }
             else
             {
                 noEncode = false;
-                encoded[n++] = (byte)'%';
+                encoded.write('%');
                 byte nibble = (byte)((b & 0xf0) >> 4);
                 if (nibble >= 10)
-                    encoded[n++] = (byte)('A' + nibble - 10);
+                    encoded.write((byte)('A' + nibble - 10));
                 else
-                    encoded[n++] = (byte)('0' + nibble);
+                    encoded.write((byte)('0' + nibble));
                 nibble = (byte)(b & 0xf);
                 if (nibble >= 10)
-                    encoded[n++] = (byte)('A' + nibble - 10);
+                    encoded.write((byte)('A' + nibble - 10));
                 else
-                    encoded[n++] = (byte)('0' + nibble);
+                    encoded.write((byte)('0' + nibble));
             }
         }
 
         if (noEncode)
             return string;
 
-        return new String(encoded, 0, n, charset);
+        return new String(encoded.toByteArray());
     }
 
     /**
